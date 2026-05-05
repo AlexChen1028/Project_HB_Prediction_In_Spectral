@@ -17,7 +17,7 @@ from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 # ==========================================
 # 1. 參數設定
 # ==========================================
-BASE_DIR = '/home/iir/alex'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER = os.path.join(BASE_DIR, 'mua')
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

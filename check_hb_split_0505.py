@@ -14,7 +14,7 @@ import unicodedata
 import math
 import os
 
-BASE_DIR    = '/home/iir/alex'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER  = os.path.join(BASE_DIR, 'mua')
 
 HB_THRESHOLD = 10.0

@@ -14,7 +14,7 @@ from tqdm import tqdm
 # ==========================================
 # 1. 參數設定 (需與 train_swt_hb_split.py 一致)
 # ==========================================
-BASE_DIR        = '/home/iir/alex'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER      = os.path.join(BASE_DIR, 'mua')
 LOW_MODEL_PATH  = os.path.join(BASE_DIR, 'swt_hb_low_model.pth')
 HIGH_MODEL_PATH = os.path.join(BASE_DIR, 'swt_hb_high_model.pth')

@@ -24,7 +24,7 @@ from sklearn.metrics import (accuracy_score, roc_auc_score,
 # ==========================================
 # 1. 參數設定
 # ==========================================
-BASE_DIR    = '/home/iir/alex'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER  = os.path.join(BASE_DIR, 'mua')
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

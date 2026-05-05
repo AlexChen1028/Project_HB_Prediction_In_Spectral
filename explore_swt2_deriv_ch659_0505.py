@@ -19,7 +19,7 @@ from scipy import stats
 # ==========================================
 # 參數
 # ==========================================
-BASE_DIR   = '/home/iir/alex'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER = os.path.join(BASE_DIR, 'mua')
 
 SWT_LEVEL   = 2
