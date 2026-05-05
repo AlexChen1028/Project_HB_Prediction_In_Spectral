@@ -1,0 +1,7 @@
+# Ignore everything
+*
+
+# Except Python source files and README
+!*.py
+!README.md
+!.gitignore
