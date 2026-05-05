@@ -74,7 +74,7 @@ def load_all(base_dir, mua_folder):
     excel_cache = {}
     files = [f for f in os.listdir(mua_folder) if f.endswith('.txt')]
 
-    for f_name in tqdm(files, desc='SWT2 + 微分特徵提取中'):
+    for f_name in tqdm(files, desc='Extracting SWT2+deriv features'):
         norm = unicodedata.normalize('NFKC', f_name).lower()
         d_m  = re.search(r'(\d{4})_(\d{2})_(\d{2})', norm)
         sb_m = re.search(r'(morning|afternoon|evening)_([a-z]+)0*(\d+)', norm)
@@ -126,13 +126,13 @@ def analyse(records):
 
     # ── 三個點值的相關性 ──
     feats = {
-        'raw_659 (原始光譜)':       raw_659,
+        'raw_659 (spectrum)':            raw_659,
         f'cA2 @ 659nm (SWT{SWT_LEVEL})': cA2_659,
-        'd1 (斜率) @ 659nm':        d1_659,
+        'd1 (slope) @ 659nm':            d1_659,
     }
 
     print(f"\n{'='*55}")
-    print(f"  相關性分析  (N={len(records)})")
+    print(f"  Correlation analysis  (N={len(records)})")
     print(f"{'='*55}")
     for name, vals in feats.items():
         r, p = stats.pearsonr(vals, hb)
@@ -151,7 +151,7 @@ def analyse(records):
         ax.axhline(10, color='green', linestyle=':', lw=1, alpha=0.7)
         ax.grid(True, alpha=0.4)
 
-    plt.suptitle(f'SWT{SWT_LEVEL} 階 + 微分 @ 659nm × ClinicHb', fontsize=13)
+    plt.suptitle(f'SWT{SWT_LEVEL} + d1 @ 659nm vs ClinicHb', fontsize=13)
     plt.tight_layout()
     plt.savefig('swt2_deriv_ch659_scatter.png', dpi=150)
     plt.close()
@@ -168,8 +168,8 @@ def analyse(records):
     plt.axhline(0, color='black', lw=0.8)
     plt.axvline(659, color='red', linestyle='--', lw=1.2, label='659nm')
     plt.xlabel('Wavelength (nm)')
-    plt.ylabel('Pearson r  (d1 × ClinicHb)')
-    plt.title(f'SWT{SWT_LEVEL} 1階導數 × ClinicHb 相關性（600–720nm）')
+    plt.ylabel('Pearson r  (d1 vs ClinicHb)')
+    plt.title(f'SWT{SWT_LEVEL} 1st deriv vs ClinicHb (600-720nm)')
     plt.legend(); plt.grid(True, alpha=0.4)
     plt.tight_layout()
     plt.savefig('swt2_deriv_corr_600to720.png', dpi=150)
@@ -177,16 +177,13 @@ def analyse(records):
 
     best_wl = wavelengths[np.argmax(np.abs(corr_curve))]
     best_r  = corr_curve[np.argmax(np.abs(corr_curve))]
-    print(f"\n>>> 600-720nm 範圍內 d1 最高相關波長: {best_wl}nm  r={best_r:+.4f}")
-    print(f">>> 圖表已儲存: swt2_deriv_ch659_scatter.png, swt2_deriv_corr_600to720.png")
+    print(f"\n>>> Best d1 wavelength in 600-720nm: {best_wl}nm  r={best_r:+.4f}")
+    print(f">>> Figures saved: swt2_deriv_ch659_scatter.png, swt2_deriv_corr_600to720.png")
 
 
-# ==========================================
-# 主程式
-# ==========================================
 if __name__ == '__main__':
     if not os.path.isdir(MUA_FOLDER):
-        print(f'找不到光譜資料夾: {MUA_FOLDER}'); exit()
+        print(f'Spectrum folder not found: {MUA_FOLDER}'); exit()
     records = load_all(BASE_DIR, MUA_FOLDER)
-    print(f"\n>>> 共載入 {len(records)} 筆")
+    print(f"\n>>> Loaded {len(records)} samples")
     analyse(records)

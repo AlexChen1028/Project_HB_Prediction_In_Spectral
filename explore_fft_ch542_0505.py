@@ -49,7 +49,7 @@ def load_all(base_dir, mua_folder):
     excel_cache = {}
     files = [f for f in os.listdir(mua_folder) if f.endswith('.txt')]
 
-    for f_name in tqdm(files, desc='FFT 特徵提取中'):
+    for f_name in tqdm(files, desc='Extracting FFT features'):
         norm = unicodedata.normalize('NFKC', f_name).lower()
         d_m  = re.search(r'(\d{4})_(\d{2})_(\d{2})', norm)
         sb_m = re.search(r'(morning|afternoon|evening)_([a-z]+)0*(\d+)', norm)
@@ -124,14 +124,14 @@ def analyse(records):
         plt.figure(figsize=(10, 4))
         plt.bar(range(n_meas), corr_t, color='steelblue', alpha=0.8)
         plt.axhline(0, color='red', lw=1)
-        plt.xlabel('FFT frequency index (時間域 @ 542nm)')
+        plt.xlabel('FFT frequency index (temporal @ 542nm)')
         plt.ylabel("Pearson r with ClinicHb")
-        plt.title(f"時間域 FFT @ 542nm × ClinicHb 相關性  (N={len(valid_t)})")
+        plt.title(f"Temporal FFT @ 542nm vs ClinicHb  (N={len(valid_t)})")
         plt.tight_layout(); plt.savefig('fft_temporal_ch542_corr.png', dpi=150); plt.close()
-        print(f">>> [方案A] 時間域 FFT 相關性圖 → fft_temporal_ch542_corr.png")
-        print(f"    最高 |r|: {max(abs(c) for c in corr_t):.4f} (freq idx {np.argmax(np.abs(corr_t))})")
+        print(f">>> [Method A] Temporal FFT corr plot -> fft_temporal_ch542_corr.png")
+        print(f"    Max |r|: {max(abs(c) for c in corr_t):.4f} (freq idx {np.argmax(np.abs(corr_t))})")
     else:
-        print(">>> [方案A] 重複量測數 < 4，跳過時間域 FFT")
+        print(">>> [Method A] <4 repeated measurements, skipping temporal FFT")
 
     # ── 方案 B：光譜 FFT 相關性 ──
     n_fft = min(r['fft_spectrum'].shape[0] for r in records)
@@ -144,9 +144,9 @@ def analyse(records):
     plt.subplot(1, 2, 1)
     plt.plot(corr_s, lw=1.2, color='darkorange')
     plt.axhline(0, color='red', lw=0.8)
-    plt.xlabel('FFT coefficient index（光譜頻域）')
+    plt.xlabel('FFT coefficient index (spectral domain)')
     plt.ylabel('Pearson r with ClinicHb')
-    plt.title(f'光譜 FFT 係數 × ClinicHb 相關性  (N={len(records)})')
+    plt.title(f'Spectral FFT coef vs ClinicHb  (N={len(records)})')
     plt.grid(True, alpha=0.4)
 
     plt.subplot(1, 2, 2)
@@ -155,25 +155,21 @@ def analyse(records):
     r_val, p_val = stats.pearsonr(fft_s[:, best_idx], hb)
     plt.xlabel(f'FFT coef [{best_idx}] amplitude')
     plt.ylabel('ClinicHb (g/dL)')
-    plt.title(f'最高相關 FFT 係數 [{best_idx}]  r={r_val:.3f}  p={p_val:.3e}')
+    plt.title(f'Top correlated FFT coef [{best_idx}]  r={r_val:.3f}  p={p_val:.3e}')
     plt.grid(True, alpha=0.4)
 
     plt.tight_layout(); plt.savefig('fft_spectrum_corr.png', dpi=150); plt.close()
-    print(f">>> [方案B] 光譜 FFT 相關性圖 → fft_spectrum_corr.png")
-    print(f"    Top-5 相關 FFT 係數 index: {top_k[:5].tolist()}")
-    print(f"    對應 |r|: {[f'{abs(corr_s[i]):.4f}' for i in top_k[:5]]}")
+    print(f">>> [Method B] Spectral FFT corr plot -> fft_spectrum_corr.png")
+    print(f"    Top-5 FFT coef index: {top_k[:5].tolist()}")
+    print(f"    Corresponding |r|: {[f'{abs(corr_s[i]):.4f}' for i in top_k[:5]]}")
 
-    # ── v542 原始值與 HB 的相關性（對照組）──
     r_raw, p_raw = stats.pearsonr(v542, hb)
-    print(f"\n>>> v542 原始值 × HB: r={r_raw:.4f}  p={p_raw:.3e}")
+    print(f"\n>>> v542 raw value vs HB: r={r_raw:.4f}  p={p_raw:.3e}")
 
 
-# ==========================================
-# 主程式
-# ==========================================
 if __name__ == '__main__':
     if not os.path.isdir(MUA_FOLDER):
-        print(f'找不到光譜資料夾: {MUA_FOLDER}'); exit()
+        print(f'Spectrum folder not found: {MUA_FOLDER}'); exit()
     records = load_all(BASE_DIR, MUA_FOLDER)
-    print(f"\n>>> 共載入 {len(records)} 筆")
+    print(f"\n>>> Loaded {len(records)} samples")
     analyse(records)

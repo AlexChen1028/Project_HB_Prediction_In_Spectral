@@ -78,7 +78,7 @@ def load_all(base_dir, mua_folder):
     excel_cache = {}
     files = [f for f in os.listdir(mua_folder) if f.endswith('.txt')]
 
-    for f_name in tqdm(files, desc='導數特徵提取中'):
+    for f_name in tqdm(files, desc='Extracting derivative features'):
         norm = unicodedata.normalize('NFKC', f_name).lower()
         d_m  = re.search(r'(\d{4})_(\d{2})_(\d{2})', norm)
         sb_m = re.search(r'(morning|afternoon|evening)_([a-z]+)0*(\d+)', norm)
@@ -215,10 +215,10 @@ def plot_top_features(records, hb, corr_d1, corr_d2, wavelengths):
 # ==========================================
 def main():
     if not os.path.isdir(MUA_FOLDER):
-        print(f'找不到光譜資料夾: {MUA_FOLDER}'); return
+        print(f'Spectrum folder not found: {MUA_FOLDER}'); return
 
     records = load_all(BASE_DIR, MUA_FOLDER)
-    print(f"\n>>> 共載入 {len(records)} 筆")
+    print(f"\n>>> Loaded {len(records)} samples")
     if len(records) == 0: return
 
     hb          = np.array([r['hb']  for r in records])
@@ -235,9 +235,9 @@ def main():
 
     # ── 印出重點波長相關性 ──
     print(f"\n{'='*60}")
-    print(f"  重點波長相關性  (N={len(records)})")
+    print(f"  Key wavelength correlations  (N={len(records)})")
     print(f"{'='*60}")
-    print(f"  {'波長':<10} {'raw':>8} {'cA':>8} {'d1':>8} {'d2':>8}")
+    print(f"  {'wavelength':<12} {'raw':>8} {'cA':>8} {'d1':>8} {'d2':>8}")
     for name, idx in KEY_IDX.items():
         rel_idx = idx - RANGE_START
         if 0 <= rel_idx < len(corr_raw):
