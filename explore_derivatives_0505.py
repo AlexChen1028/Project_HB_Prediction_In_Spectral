@@ -121,9 +121,15 @@ def load_all(base_dir, mua_folder):
 # 相關性計算
 # ==========================================
 def corr_curve(matrix, hb):
-    """每個波長位置計算 Pearson r"""
-    return np.array([stats.pearsonr(matrix[:, k], hb)[0]
-                     for k in range(matrix.shape[1])])
+    """每個波長位置計算 Pearson r，常數欄位回傳 0"""
+    out = []
+    for k in range(matrix.shape[1]):
+        col = matrix[:, k]
+        if col.std() == 0:
+            out.append(0.0)
+        else:
+            out.append(stats.pearsonr(col, hb)[0])
+    return np.array(out)
 
 
 # ==========================================
@@ -132,7 +138,7 @@ def corr_curve(matrix, hb):
 def plot_corr_overview(wavelengths, corr_dict, n_samples):
     fig, axes = plt.subplots(4, 1, figsize=(14, 14), sharex=True)
     colors = ['gray', 'steelblue', 'darkorange', 'purple']
-    labels = ['raw spectrum (cA 原始)', f'SWT{SWT_LEVEL} cA', '1 階導數 (d1)', '2 階導數 (d2)']
+    labels = [f'raw spectrum', f'SWT{SWT_LEVEL} cA', '1st deriv (d1)', '2nd deriv (d2)']
 
     for ax, (key, corr), color, label in zip(axes, corr_dict.items(), colors, labels):
         ax.plot(wavelengths, corr, lw=1.2, color=color, label=label)
@@ -147,17 +153,19 @@ def plot_corr_overview(wavelengths, corr_dict, n_samples):
         ax.grid(True, alpha=0.3)
 
     axes[-1].set_xlabel('Wavelength (nm)')
-    plt.suptitle(f'各波長 × ClinicHb 相關性  (N={n_samples})', fontsize=13)
+    plt.suptitle(f'Correlation with ClinicHb per wavelength  (N={n_samples})', fontsize=13)
     plt.tight_layout()
     plt.savefig('derivatives_corr_overview.png', dpi=150)
     plt.close()
-    print('>>> 相關性總覽圖 → derivatives_corr_overview.png')
+    print('>>> derivatives_corr_overview.png saved')
 
 
 def plot_top_features(records, hb, corr_d1, corr_d2, wavelengths):
-    """d1 和 d2 最高相關波長的散佈圖"""
-    top_d1_idx = np.argsort(np.abs(corr_d1))[-3:][::-1]
-    top_d2_idx = np.argsort(np.abs(corr_d2))[-3:][::-1]
+    """d1 / d2 最高相關波長的散佈圖（跳過常數欄位）"""
+    valid_mask = ~np.isnan(corr_d1)
+    top_d1_idx = np.argsort(np.where(valid_mask, np.abs(corr_d1), 0))[-3:][::-1]
+    valid_mask2 = ~np.isnan(corr_d2)
+    top_d2_idx = np.argsort(np.where(valid_mask2, np.abs(corr_d2), 0))[-3:][::-1]
 
     d1_mat = np.array([r['d1'] for r in records])
     d2_mat = np.array([r['d2'] for r in records])
@@ -167,6 +175,8 @@ def plot_top_features(records, hb, corr_d1, corr_d2, wavelengths):
         ax = axes[0, col]
         wl = wavelengths[idx]
         vals = d1_mat[:, idx]
+        if vals.std() == 0:
+            ax.set_title(f'd1 @ {wl}nm  (constant)'); continue
         r, p = stats.pearsonr(vals, hb)
         ax.scatter(vals, hb, alpha=0.5, color='darkorange', edgecolors='none', s=20)
         m, b = np.polyfit(vals, hb, 1)
@@ -181,6 +191,8 @@ def plot_top_features(records, hb, corr_d1, corr_d2, wavelengths):
         ax = axes[1, col]
         wl = wavelengths[idx]
         vals = d2_mat[:, idx]
+        if vals.std() == 0:
+            ax.set_title(f'd2 @ {wl}nm  (constant)'); continue
         r, p = stats.pearsonr(vals, hb)
         ax.scatter(vals, hb, alpha=0.5, color='purple', edgecolors='none', s=20)
         m, b = np.polyfit(vals, hb, 1)
@@ -191,11 +203,11 @@ def plot_top_features(records, hb, corr_d1, corr_d2, wavelengths):
         ax.axhline(10, color='green', lw=0.8, linestyle=':')
         ax.grid(True, alpha=0.4)
 
-    plt.suptitle('Top-3 相關波長散佈圖  (上: d1  下: d2)', fontsize=13)
+    plt.suptitle('Top-3 correlated wavelengths  (top: d1 / bottom: d2)', fontsize=13)
     plt.tight_layout()
     plt.savefig('derivatives_top_scatter.png', dpi=150)
     plt.close()
-    print('>>> Top 特徵散佈圖 → derivatives_top_scatter.png')
+    print('>>> derivatives_top_scatter.png saved')
 
 
 # ==========================================
@@ -232,13 +244,15 @@ def main():
             print(f"  {name:<10} {corr_raw[rel_idx]:>+8.4f} {corr_cA[rel_idx]:>+8.4f} "
                   f"{corr_d1[rel_idx]:>+8.4f} {corr_d2[rel_idx]:>+8.4f}")
 
-    # ── Top-5 最高相關特徵 ──
-    print(f"\n  Top-5 d1 相關波長:")
-    for i in np.argsort(np.abs(corr_d1))[-5:][::-1]:
+    # ── Top-5 最高相關特徵（排除常數/nan）──
+    print(f"\n  Top-5 d1 correlated wavelengths:")
+    safe_d1 = np.where(np.isnan(corr_d1), 0, np.abs(corr_d1))
+    for i in np.argsort(safe_d1)[-5:][::-1]:
         print(f"    {500 + RANGE_START + i}nm  r={corr_d1[i]:+.4f}")
 
-    print(f"\n  Top-5 d2 相關波長:")
-    for i in np.argsort(np.abs(corr_d2))[-5:][::-1]:
+    print(f"\n  Top-5 d2 correlated wavelengths:")
+    safe_d2 = np.where(np.isnan(corr_d2), 0, np.abs(corr_d2))
+    for i in np.argsort(safe_d2)[-5:][::-1]:
         print(f"    {500 + RANGE_START + i}nm  r={corr_d2[i]:+.4f}")
 
     plot_corr_overview(wavelengths,
