@@ -1,7 +1,7 @@
 """
-二元分類：預測 HB < 10 (label=0) 或 HB >= 10 (label=1)
-特徵：SWT 第 SWT_LEVEL 階近似係數，取 v540 / v560 / v577
-標準化：三個 channel 共用同一 mean/std（保留相對關係）
+Binary classification: HB < 10 (label=0) vs HB >= 10 (label=1)
+Features: SWT cA3 2nd-order derivative (d2) at 537 / 540 / 560 / 577nm
+Normalization: per-feature z-score
 """
 import torch
 import torch.nn as nn
@@ -9,10 +9,7 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import pandas as pd
 import numpy as np
-import os
-import re
-import unicodedata
-import pywt
+import os, re, unicodedata, pywt
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from collections import defaultdict
@@ -22,9 +19,9 @@ from sklearn.metrics import (accuracy_score, roc_auc_score,
                              f1_score, confusion_matrix, roc_curve)
 
 # ==========================================
-# 1. 參數設定
+# Parameters
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUA_FOLDER  = os.path.join(BASE_DIR, 'mua')
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,13 +35,18 @@ TRAIN_RATIO  = 4
 
 SWT_LEVEL   = 3
 SWT_WAVELET = 'db4'
-IDX_540 = 40; IDX_560 = 60; IDX_577 = 77; WINDOW_W = 2
+WINDOW_W    = 2
+SPEC_LEN    = 896
 
-MODEL_PATH = 'swt_hb_binary_model.pth'
+D2_INDICES = [37, 40, 60, 77]   # 537, 540, 560, 577 nm
+D2_LABELS  = ['d2@537nm', 'd2@540nm', 'd2@560nm', 'd2@577nm']
+N_FEATURES = len(D2_INDICES)
+
+MODEL_PATH = 'd2_hb_binary_model.pth'
 
 
 # ==========================================
-# 2. 工具函數
+# Utilities
 # ==========================================
 def _clean_bed(val):
     if pd.isnull(val): return ""
@@ -54,25 +56,26 @@ def _clean_bed(val):
     return f"{m.group(1)}{m.group(2)}" if m else val
 
 
-def _extract_spectral(mua_path):
+def _extract_d2(mua_path):
     data = np.loadtxt(mua_path, delimiter='\t')
     v = np.mean(data[:, 1:], axis=1)
-    if len(v) < 896: v = np.pad(v, (0, 896 - len(v)), mode='edge')
-    else:            v = v[:896]
+    if len(v) < SPEC_LEN: v = np.pad(v, (0, SPEC_LEN - len(v)), mode='edge')
+    else:                  v = v[:SPEC_LEN]
     coeffs = pywt.swt(v, wavelet=SWT_WAVELET, level=SWT_LEVEL)
-    cA = coeffs[0][0]
-    def pt(idx): return float(np.mean(cA[max(0, idx - WINDOW_W): idx + WINDOW_W + 1]))
-    return np.array([pt(IDX_540), pt(IDX_560), pt(IDX_577)], dtype=np.float32)
+    cA3 = coeffs[0][0]
+    d2  = np.gradient(np.gradient(cA3))
+    def pt(idx): return float(np.mean(d2[max(0, idx - WINDOW_W): idx + WINDOW_W + 1]))
+    return np.array([pt(i) for i in D2_INDICES], dtype=np.float32)
 
 
 def load_dataset(base_dir, mua_folder):
     raw_feats, labels, patient_ids = [], [], []
     excel_cache = {}
     files = [f for f in os.listdir(mua_folder) if f.endswith('.txt')]
-    for f_name in tqdm(files, desc="特徵提取中"):
-        norm = unicodedata.normalize('NFKC', f_name).lower()
-        d_m  = re.search(r'(\d{4})_(\d{2})_(\d{2})', norm)
-        sb_m = re.search(r'(morning|afternoon|evening)_([a-z]+)0*(\d+)', norm)
+    for f_name in tqdm(files, desc='Extracting d2 features'):
+        norm  = unicodedata.normalize('NFKC', f_name).lower()
+        d_m   = re.search(r'(\d{4})_(\d{2})_(\d{2})', norm)
+        sb_m  = re.search(r'(morning|afternoon|evening)_([a-z]+)0*(\d+)', norm)
         if not (d_m and sb_m): continue
         date_str   = f"{d_m.group(1)}{d_m.group(2)}{d_m.group(3)}"
         shift      = {'morning':'早','afternoon':'午','evening':'晚'}.get(sb_m.group(1))
@@ -85,51 +88,53 @@ def load_dataset(base_dir, mua_folder):
                 df.columns = df.columns.str.strip()
                 df['Bed_C']   = df['DialysisBed'].apply(_clean_bed)
                 df['Shift_C'] = df['Shift'].apply(
-                    lambda x: "早" if "早" in str(x) else ("午" if "午" in str(x) else "晚"))
+                    lambda x: '早' if '早' in str(x) else ('午' if '午' in str(x) else '晚'))
                 excel_cache[date_str] = df
             else: excel_cache[date_str] = None
         df = excel_cache[date_str]
         if df is None: continue
         row = df[(df['Bed_C'] == bed) & (df['Shift_C'] == shift)]
         if row.empty or pd.isnull(row.iloc[0]['ClinicHb']): continue
-        raw_feats.append(_extract_spectral(os.path.join(mua_folder, f_name)))
+        raw_feats.append(_extract_d2(os.path.join(mua_folder, f_name)))
         labels.append(float(row.iloc[0]['ClinicHb']))
         patient_ids.append(patient_id)
-    raw_feats = np.array(raw_feats, dtype=np.float32)
-    labels    = np.array(labels,    dtype=np.float32)
-    print(f"\n>>> 配對成功: {len(labels)} 筆 / {len(set(patient_ids))} 位病人")
-    return raw_feats, labels, patient_ids
+    X = np.array(raw_feats, dtype=np.float32)
+    y = np.array(labels,    dtype=np.float32)
+    print(f"\n>>> Loaded {len(y)} samples / {len(set(patient_ids))} patients")
+    return X, y, patient_ids
 
 
 # ==========================================
-# 3. 模型
+# Model
 # ==========================================
 class HbBinaryNet(nn.Module):
-    def __init__(self, n_in=3):
+    def __init__(self, n_in=N_FEATURES):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_in, 64), nn.BatchNorm1d(64), nn.ReLU(),
             nn.Linear(64, 32),   nn.BatchNorm1d(32), nn.ReLU(),
             nn.Linear(32, 16),   nn.BatchNorm1d(16), nn.ReLU(),
-            nn.Linear(16, 1)     # BCEWithLogitsLoss 不需手動加 sigmoid
+            nn.Linear(16, 1)
         )
     def forward(self, x): return self.net(x).squeeze(-1)
 
 
 # ==========================================
-# 4. 評估指標
+# Metrics
 # ==========================================
 def binary_metrics(y_true, logits, threshold=0.5):
-    probs  = torch.sigmoid(torch.tensor(logits)).numpy()
-    preds  = (probs >= threshold).astype(int)
+    probs = torch.sigmoid(torch.tensor(logits)).numpy()
+    preds = (probs >= threshold).astype(int)
     y_true = y_true.astype(int)
-    acc  = accuracy_score(y_true, preds)
-    prec = precision_score(y_true, preds, zero_division=0)
-    rec  = recall_score(y_true, preds, zero_division=0)
-    f1   = f1_score(y_true, preds, zero_division=0)
-    auc  = roc_auc_score(y_true, probs) if len(np.unique(y_true)) > 1 else float('nan')
-    cm   = confusion_matrix(y_true, preds)
-    return dict(acc=acc, prec=prec, rec=rec, f1=f1, auc=auc, cm=cm, probs=probs)
+    return dict(
+        acc  = accuracy_score(y_true, preds),
+        prec = precision_score(y_true, preds, zero_division=0),
+        rec  = recall_score(y_true, preds, zero_division=0),
+        f1   = f1_score(y_true, preds, zero_division=0),
+        auc  = roc_auc_score(y_true, probs) if len(np.unique(y_true)) > 1 else float('nan'),
+        cm   = confusion_matrix(y_true, preds),
+        probs= probs,
+    )
 
 
 def plot_roc(y_true, probs, tag):
@@ -141,23 +146,22 @@ def plot_roc(y_true, probs, tag):
     plt.xlabel('False Positive Rate'); plt.ylabel('True Positive Rate')
     plt.title(f'ROC Curve — {tag}'); plt.legend()
     plt.tight_layout(); plt.savefig(f'roc_{tag}.png', dpi=150); plt.close()
-    print(f">>> ROC 圖儲存至 roc_{tag}.png")
+    print(f">>> ROC saved: roc_{tag}.png")
 
 
 # ==========================================
-# 5. 主訓練函數
+# Training
 # ==========================================
 def train():
-    print(f"\n>>> HB 二元分類 (Device: {DEVICE})")
-    print(f">>> SWT {SWT_LEVEL} 階，label: 0=HB<{HB_THRESHOLD}  1=HB>={HB_THRESHOLD}")
+    print(f"\n>>> HB Binary Classification  (Device: {DEVICE})")
+    print(f">>> Features: {D2_LABELS}")
     raw_features, hb_values, patient_ids = load_dataset(BASE_DIR, MUA_FOLDER)
     if len(hb_values) == 0: return
 
     binary_labels = (hb_values >= HB_THRESHOLD).astype(np.float32)
     n_pos = binary_labels.sum(); n_neg = len(binary_labels) - n_pos
-    print(f">>> 正例 (HB>=10): {int(n_pos)}  負例 (HB<10): {int(n_neg)}")
+    print(f">>> Positive (HB>=10): {int(n_pos)}  Negative (HB<10): {int(n_neg)}")
 
-    # 正負樣本不平衡時調整權重
     pos_weight = torch.tensor([n_neg / n_pos], dtype=torch.float32).to(DEVICE)
     criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
@@ -165,82 +169,76 @@ def train():
     for i, pid in enumerate(patient_ids): patient_sample_map[pid].append(i)
 
     rng = np.random.default_rng(42)
-    shuffled_patients = list(patient_sample_map.keys())
-    rng.shuffle(shuffled_patients)
+    shuffled = list(patient_sample_map.keys()); rng.shuffle(shuffled)
+    n_test        = max(1, len(shuffled) // (TRAIN_RATIO + 1))
+    test_patients = set(shuffled[-n_test:])
+    train_patients= shuffled[:-n_test]
 
-    n_test_patients     = max(1, len(shuffled_patients) // (TRAIN_RATIO + 1))
-    test_patients       = set(shuffled_patients[-n_test_patients:])
-    train_patients_list = shuffled_patients[:-n_test_patients]
+    tr_idx   = [i for pid in train_patients for i in patient_sample_map[pid]]
+    test_idx = [i for pid in test_patients  for i in patient_sample_map[pid]]
 
-    tr_idx   = [i for pid in train_patients_list for i in patient_sample_map[pid]]
-    test_idx = [i for pid in test_patients        for i in patient_sample_map[pid]]
-
-    print(f"\n  Train: {len(tr_idx)} 筆 ({len(train_patients_list)} 人)")
-    print(f"  Test:  {len(test_idx)} 筆 ({len(test_patients)} 人)")
+    print(f"\n  Train: {len(tr_idx)} samples ({len(train_patients)} patients)")
+    print(f"  Test:  {len(test_idx)} samples ({len(test_patients)} patients)")
 
     tr_raw   = raw_features[tr_idx]
     tr_labels= binary_labels[tr_idx]
     tr_pids  = [patient_ids[i] for i in tr_idx]
-    unique_tr_patients = np.unique(tr_pids)
+    unique_tr= np.unique(tr_pids)
 
-    actual_folds = min(N_FOLDS, len(unique_tr_patients))
+    actual_folds = min(N_FOLDS, len(unique_tr))
     kf = KFold(n_splits=actual_folds, shuffle=True, random_state=42)
     print(f"\n  {actual_folds}-Fold CV")
 
     fold_results = []
-    for fold, (f_tr_pat_idx, f_val_pat_idx) in enumerate(kf.split(unique_tr_patients)):
-        f_tr_pats  = set(unique_tr_patients[f_tr_pat_idx])
-        f_val_pats = set(unique_tr_patients[f_val_pat_idx])
-        f_tr_local  = [i for i, pid in enumerate(tr_pids) if pid in f_tr_pats]
-        f_val_local = [i for i, pid in enumerate(tr_pids) if pid in f_val_pats]
-        if len(f_tr_local) < BATCH_SIZE or len(f_val_local) < 2:
-            print(f"  Fold {fold+1}: 跳過（樣本不足）"); continue
+    for fold, (f_tr_idx, f_val_idx) in enumerate(kf.split(unique_tr)):
+        f_tr_pats  = set(unique_tr[f_tr_idx])
+        f_val_pats = set(unique_tr[f_val_idx])
+        f_tr_loc   = [i for i, pid in enumerate(tr_pids) if pid in f_tr_pats]
+        f_val_loc  = [i for i, pid in enumerate(tr_pids) if pid in f_val_pats]
+        if len(f_tr_loc) < BATCH_SIZE or len(f_val_loc) < 2:
+            print(f"  Fold {fold+1}: skip (insufficient samples)"); continue
+        if len(np.unique(tr_labels[f_tr_loc])) < 2:
+            print(f"  Fold {fold+1}: skip (single class in fold)"); continue
 
-        f_tr_raw  = tr_raw[f_tr_local];  f_val_raw = tr_raw[f_val_local]
-        feat_mean = f_tr_raw.mean();     feat_std  = f_tr_raw.std() + 1e-8
-        f_tr_norm  = (f_tr_raw  - feat_mean) / feat_std
-        f_val_norm = (f_val_raw - feat_mean) / feat_std
+        f_tr  = tr_raw[f_tr_loc];  f_val = tr_raw[f_val_loc]
+        f_mean = f_tr.mean(axis=0); f_std = f_tr.std(axis=0) + 1e-8
+        f_tr_n  = (f_tr  - f_mean) / f_std
+        f_val_n = (f_val - f_mean) / f_std
 
-        f_tr_lbl  = tr_labels[f_tr_local]
-        f_val_lbl = tr_labels[f_val_local]
+        f_tr_lbl  = tr_labels[f_tr_loc]
+        f_val_lbl = tr_labels[f_val_loc]
 
-        f_train_loader = DataLoader(
-            TensorDataset(torch.tensor(f_tr_norm), torch.tensor(f_tr_lbl)),
-            batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
-        f_val_loader = DataLoader(
-            TensorDataset(torch.tensor(f_val_norm), torch.tensor(f_val_lbl)),
-            batch_size=BATCH_SIZE, shuffle=False)
+        f_train_dl = DataLoader(TensorDataset(torch.tensor(f_tr_n), torch.tensor(f_tr_lbl)),
+                                batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+        f_val_dl   = DataLoader(TensorDataset(torch.tensor(f_val_n), torch.tensor(f_val_lbl)),
+                                batch_size=BATCH_SIZE, shuffle=False)
 
-        model     = HbBinaryNet().to(DEVICE)
-        optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-        best_val_loss = float('inf')
-        fold_model_path = f'binary_fold{fold+1}_tmp.pth'
+        model = HbBinaryNet().to(DEVICE)
+        opt   = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+        best_val = float('inf')
+        fold_path = f'binary_fold{fold+1}_tmp.pth'
 
         pbar = tqdm(range(EPOCHS), desc=f"  Fold {fold+1}", unit="ep", leave=False)
         for epoch in pbar:
-            model.train(); tr_l = 0
-            for x, y in f_train_loader:
+            model.train(); tl = 0
+            for x, y in f_train_dl:
                 x, y = x.to(DEVICE), y.to(DEVICE)
-                optimizer.zero_grad()
-                loss = criterion(model(x), y); loss.backward(); optimizer.step()
-                tr_l += loss.item()
-            model.eval(); val_l = 0
+                opt.zero_grad(); criterion(model(x), y).backward(); opt.step()
+                tl += 1
+            model.eval(); vl = 0
             with torch.no_grad():
-                for x, y in f_val_loader:
+                for x, y in f_val_dl:
                     x, y = x.to(DEVICE), y.to(DEVICE)
-                    val_l += criterion(model(x), y).item()
-            avg_tr = tr_l / len(f_train_loader)
-            avg_val= val_l / len(f_val_loader)
-            pbar.set_postfix({'tr': f'{avg_tr:.3f}', 'val': f'{avg_val:.3f}'})
-            if avg_val < best_val_loss:
-                best_val_loss = avg_val
-                torch.save(model.state_dict(), fold_model_path)
+                    vl += criterion(model(x), y).item()
+            avg_val = vl / len(f_val_dl)
+            pbar.set_postfix({'val': f'{avg_val:.3f}'})
+            if avg_val < best_val:
+                best_val = avg_val; torch.save(model.state_dict(), fold_path)
 
-        model.load_state_dict(torch.load(fold_model_path, weights_only=True))
-        model.eval()
+        model.load_state_dict(torch.load(fold_path, weights_only=True)); model.eval()
         logits_f, y_true_f = [], []
         with torch.no_grad():
-            for x, y in f_val_loader:
+            for x, y in f_val_dl:
                 logits_f.extend(model(x.to(DEVICE)).cpu().numpy())
                 y_true_f.extend(y.numpy())
         m = binary_metrics(np.array(y_true_f), np.array(logits_f))
@@ -249,60 +247,56 @@ def train():
               f"F1={m['f1']:.3f} | Prec={m['prec']:.3f} | Rec={m['rec']:.3f}")
 
     if fold_results:
-        print(f"\n  K-Fold 平均:")
+        print(f"\n  K-Fold Average:")
         for key in ('acc', 'auc', 'f1', 'prec', 'rec'):
             vals = [r[key] for r in fold_results if not np.isnan(r[key])]
             if vals: print(f"    {key.upper():<5}: {np.mean(vals):.4f} ± {np.std(vals):.4f}")
 
-    # ── 最終模型 ──
-    print(f"\n  最終模型訓練")
-    feat_mean = tr_raw.mean(); feat_std = tr_raw.std() + 1e-8
-    tr_norm   = (tr_raw - feat_mean) / feat_std
-    test_raw  = raw_features[test_idx]
-    test_norm = (test_raw - feat_mean) / feat_std
-    test_lbl  = binary_labels[test_idx]
+    # ── Final model ───────────────────────────────────────────────────────────
+    print(f"\n  Final model training")
+    f_mean = tr_raw.mean(axis=0); f_std = tr_raw.std(axis=0) + 1e-8
+    tr_n   = (tr_raw - f_mean) / f_std
+    te_raw = raw_features[test_idx]; te_n = (te_raw - f_mean) / f_std
+    te_lbl = binary_labels[test_idx]
 
-    bs = min(BATCH_SIZE, max(2, len(tr_norm)))
-    final_loader = DataLoader(
-        TensorDataset(torch.tensor(tr_norm), torch.tensor(tr_labels)),
-        batch_size=bs, shuffle=True, drop_last=(len(tr_norm) > bs))
-    test_loader = DataLoader(
-        TensorDataset(torch.tensor(test_norm), torch.tensor(test_lbl)),
-        batch_size=BATCH_SIZE, shuffle=False)
+    bs = min(BATCH_SIZE, max(2, len(tr_n)))
+    final_dl = DataLoader(TensorDataset(torch.tensor(tr_n), torch.tensor(tr_labels)),
+                          batch_size=bs, shuffle=True, drop_last=(len(tr_n) > bs))
+    test_dl  = DataLoader(TensorDataset(torch.tensor(te_n), torch.tensor(te_lbl)),
+                          batch_size=BATCH_SIZE, shuffle=False)
 
-    model     = HbBinaryNet().to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    model = HbBinaryNet().to(DEVICE)
+    opt   = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     best_loss = float('inf')
 
     for epoch in tqdm(range(EPOCHS), desc="  Final", unit="ep"):
         model.train()
-        for x, y in final_loader:
+        for x, y in final_dl:
             x, y = x.to(DEVICE), y.to(DEVICE)
-            optimizer.zero_grad()
-            criterion(model(x), y).backward(); optimizer.step()
+            opt.zero_grad(); criterion(model(x), y).backward(); opt.step()
         model.eval(); te_l = 0
         with torch.no_grad():
-            for x, y in test_loader:
+            for x, y in test_dl:
                 x, y = x.to(DEVICE), y.to(DEVICE)
                 te_l += criterion(model(x), y).item()
         if te_l < best_loss:
             best_loss = te_l
             torch.save({'model': model.state_dict(),
-                        'feat_mean': feat_mean, 'feat_std': feat_std,
-                        'test_patient_ids': list(test_patients)}, MODEL_PATH)
+                        'feat_mean': f_mean, 'feat_std': f_std,
+                        'test_patient_ids': list(test_patients),
+                        'd2_indices': D2_INDICES, 'd2_labels': D2_LABELS}, MODEL_PATH)
 
     ckpt = torch.load(MODEL_PATH, weights_only=False)
-    model.load_state_dict(ckpt['model'])
-    model.eval()
+    model.load_state_dict(ckpt['model']); model.eval()
     logits_all, y_true_all = [], []
     with torch.no_grad():
-        for x, y in test_loader:
+        for x, y in test_dl:
             logits_all.extend(model(x.to(DEVICE)).cpu().numpy())
             y_true_all.extend(y.numpy())
 
     m = binary_metrics(np.array(y_true_all), np.array(logits_all))
     print(f"\n{'='*50}")
-    print(f"  最終 Test Set 結果（二元分類）")
+    print(f"  Final Test Set Result")
     print(f"{'='*50}")
     print(f"  Accuracy : {m['acc']:.4f}")
     print(f"  AUC-ROC  : {m['auc']:.4f}")
@@ -311,7 +305,7 @@ def train():
     print(f"  Recall   : {m['rec']:.4f}")
     print(f"  Confusion Matrix:\n{m['cm']}")
     print(f"{'='*50}")
-    print(f">>> 模型已存為 {MODEL_PATH}")
+    print(f">>> Model saved: {MODEL_PATH}")
 
     if len(np.unique(np.array(y_true_all).astype(int))) > 1:
         plot_roc(np.array(y_true_all), m['probs'], 'binary_hb')
