@@ -90,7 +90,9 @@
 | `eval_binary_hb_0511.py` | 分類評估 |
 | `train_sklearn_0511.py` | sklearn 多模型比較（新資料）|
 | `train_cnn_regression_0511.py` | **CNN 回歸**：2D 光譜圖（300×150）→ Conv→Conv→GAP→FC |
+| `eval_cnn_regression_0511.py` | CNN 回歸評估，輸出 4 格圖（散佈、排序預測、殘差、Q-Q） |
 | `train_cnn_binary_0511.py` | **CNN 二元分類**：同架構，BCEWithLogitsLoss + pos_weight |
+| `eval_cnn_binary_0511.py` | CNN 分類評估，輸出 4 格圖（ROC、Confusion Matrix、PR、分布圖） |
 
 **模型輸出**（存至 `update_0511/`）：
 - `d2_hb_low_model_0511.pth`、`d2_hb_high_model_0511.pth`
@@ -141,6 +143,10 @@ python3 update_0511/eval_binary_hb_0511.py
 # 第四步：CNN 訓練（新方法）
 python3 update_0511/train_cnn_regression_0511.py
 python3 update_0511/train_cnn_binary_0511.py
+
+# 第五步：CNN 評估
+python3 update_0511/eval_cnn_regression_0511.py   # → eval_cnn_regression_0511.png
+python3 update_0511/eval_cnn_binary_0511.py       # → eval_cnn_binary_0511.png
 ```
 
 ---
