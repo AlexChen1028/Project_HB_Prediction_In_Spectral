@@ -1,7 +1,23 @@
-# Ignore everything
-*
+# Raw data — do not publish
+mua/
+*.txt
+*.xlsx
 
-# Except Python source files and README
-!*.py
-!README.md
-!.gitignore
+# Trained model checkpoints — contain test patient IDs
+*.pth
+
+# Temporary fold files
+*_tmp.pth
+
+# Output figures (optional — remove the lines below to include PNGs)
+# *.png
+# *.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
